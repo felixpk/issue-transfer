@@ -4,28 +4,44 @@ import json
 from typing import Dict, List
 
 import requests as requests
-import logging
 from requests.auth import HTTPBasicAuth
 
 
 def get_gitlab_issues() -> List:
-    """Download GitLab issues"""
-    return requests.get(
-        f"{GITLAB_BASE_URL}/projects/{GITLAB_PROJECT_ID}/issues?labels={GITLAB_LABELS}&state=opened",
-        headers={"PRIVATE-TOKEN": GITLAB_PAT},
-    ).json()
+    gitlab_issues = []
+    current_url = f"{GITLAB_BASE_URL}/projects/{GITLAB_PROJECT_ID}/issues?labels={GITLAB_LABELS}&state=opened&per_page=100"
+
+    while True:
+        response = requests.get(current_url, headers={"PRIVATE-TOKEN": GITLAB_PAT})
+        if response.status_code == 200:
+            gitlab_issues.extend(response.json())
+
+        if next_url := response.links.get("next"):
+            current_url = next_url.get("url")
+        else:
+            return gitlab_issues
 
 
 def get_github_issues() -> List:
-    return requests.get(
-        f"{GITHUB_BASE_URL}/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/issues",
-        headers={"Accept": "application/vnd.github.v3+json"},
-        auth=HTTPBasicAuth(GITHUB_REPO_OWNER, GITHUB_PAT),
-    ).json()
+    github_issues = []
+    current_url = f"{GITHUB_BASE_URL}/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/issues?per_page=100"
+
+    while True:
+        response = requests.get(
+            current_url,
+            headers={"Accept": "application/vnd.github.v3+json"},
+            auth=HTTPBasicAuth(GITHUB_REPO_OWNER, GITHUB_PAT),
+        )
+        if response.status_code == 200:
+            github_issues.extend(response.json())
+
+        if next_url := response.links.get("next"):
+            current_url = next_url.get("url")
+        else:
+            return github_issues
 
 
 def post_issue(issue_data: Dict):
-    """Upload issue to Github"""
     return requests.post(
         f"{GITHUB_BASE_URL}/repos/{GITHUB_REPO_OWNER}/{GITHUB_REPO_NAME}/issues",
         headers={"Accept": "application/vnd.github.v3+json"},
@@ -48,20 +64,20 @@ def transfer_issues():
         issue_title = gitlab_issue["title"]
 
         if issue_title in github_issue_titles:
-            LOGGER.warning(f"Skipped '{issue_title}' (Duplicate Title)")
+            print(f"Skipped '{issue_title}' (Duplicate Title)")
             continue
 
         if not ARGS.dry_run:
-            resp = post_issue({"title": issue_title, "body": gitlab_issue["description"]})
+            resp = post_issue(
+                {"title": issue_title, "body": gitlab_issue["description"]}
+            )
             if resp.status_code == 201:
-                LOGGER.info(f"Transfered '{issue_title}'")
+                print(f"Transfered '{issue_title}'")
         else:
-            LOGGER.info(f"[SIM] Transfered '{issue_title}'")
+            print(f"[SIM] Transfered '{issue_title}'")
 
 
 if __name__ == "__main__":
-    LOGGER = logging.getLogger(__name__)
-
     config = configparser.ConfigParser()
     config.read("settings.ini")
 
@@ -76,7 +92,7 @@ if __name__ == "__main__":
         GITHUB_REPO_OWNER = config["GITHUB"]["repo-owner"]
         GITHUB_PAT = config["GITHUB"]["access-token"]
     except KeyError as e:
-        LOGGER.error(f"Please make sure {str(e)} is defined in settings.ini")
+        print(f"Please make sure {str(e)} is defined in settings.ini")
         exit(1)
 
     ARGS = parse_arguments()
